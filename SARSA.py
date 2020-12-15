@@ -1,5 +1,5 @@
 ###############
-#   DEMO V1   #
+#    SARSA    #
 ###############
 
 from matplotlib import pyplot as plt
@@ -34,7 +34,7 @@ class Env():
         self.world[self.recharger[0]][self.recharger[1]] = 2
         self.world[self.uav[0]][self.uav[1]] = 1
 
-        initial_state = [self.uav[0], self.uav[1], self.current_fuel]
+        initial_state = (self.uav[0], self.uav[1], self.current_fuel)
 
         return initial_state
 
@@ -57,7 +57,7 @@ class Env():
         if self.uav[0] in range(self.world.shape[0]) and self.uav[1] in range(self.world.shape[1]):
 
             self.world[self.uav[0]][self.uav[1]] = 1
-            next_state = [self.uav[0], self.uav[1], self.current_fuel]
+            next_state = (self.uav[0], self.uav[1], self.current_fuel)
             reward = -1
             done = False
 
@@ -102,13 +102,44 @@ class Env():
         
         return next_state, reward, done
 
+class SARSA():
+    def __init__(self, state_space, action_space, learning_step, discount_factor, epsilon):
+        
+        self.s_space = state_space
+        self.a_space = action_space
+        self.alpha = learning_step
+        self.gamma = discount_factor
+        self.epsilon = epsilon
+
+        self.Q_table = np.zeros((self.s_space+self.a_space))
+
+    def sample_action(self, state):
+
+        if random.random() > self.epsilon:
+            # print(self.Q_table[state])
+            action = np.argmax(self.Q_table[state])
+        else:
+            action = np.random.randint(self.a_space[0])
+            
+        return action
+    
+    def update(self, state, action, reward, next_state, next_action, done):
+
+        S_A_pair = state + (action,)
+
+        if done:
+            self.Q_table[S_A_pair] = self.Q_table[S_A_pair] + self.alpha*(reward - self.Q_table[S_A_pair])
+        else:
+            Next_S_A_pair = next_state + (next_action,)
+            self.Q_table[S_A_pair] = self.Q_table[S_A_pair] + self.alpha*(reward + done*self.gamma*self.Q_table[Next_S_A_pair] - self.Q_table[S_A_pair])
+
 env = Env()
 
 # World Template
 cmap1 = colors.ListedColormap(['White', 'Black', 'Green', 'Yellow'])
 cmap2 = colors.ListedColormap(['White', 'Blue'])
 
-fig = plt.figure(figsize=(8,6))
+fig = plt.figure(1,figsize=(8,6))
 gs = GridSpec(1, 2, width_ratios=[4, 1])
 ax1 = fig.add_subplot(gs[0])
 ax1.set_title('World')
@@ -126,34 +157,63 @@ def render(env_):
     ax2.pcolormesh(env.fuel_level, cmap=cmap2, edgecolors='k', linewidths=3, vmin=0, vmax=1)
     plt.pause(1)
 
-episode = 100
+episode = 1000
 max_step = 100
+state_space = [5,5,6] 
+action_space = [5]
+learning_step = 0.1
+discount_factor = 0.99
+epsilon = 0.1
+
+render_ep = 300
 
 # action: 0-> right, 1-> left, 3-> up, 4-> down, 5-> stay
 action_dict = {0:"right", 1:"left", 2:"up", 3:"down", 4:"stay"}
 
-action_list = [0,0,3,3,4,4,4,4,4,3,3,0,0,0]
+agent = SARSA(state_space, action_space, learning_step, discount_factor, epsilon)
+
+reward_log = []
 
 for epi in range(episode):
     print("EPI START")
-    _ = env.reset()
-    render(env)
+    state = env.reset()
 
-    step = 0
-    rewards = []
-    done = False    
-    
-    while (not done) and (step < max_step):
-        action = action_list[step]
-        print(action_dict[action])
-
-        next_s, reward, done = env.get_action(action)
-        step += 1
-        rewards.append(reward)
-
+    if epi >= render_ep:
         render(env)
 
-    print("episode:",epi,"avg reward:",sum(rewards)/len(rewards))
+    step = 0
+    total_reward = 0
+    done = False
+
+    action = agent.sample_action(state)    
+    
+    while (not done) and (step < max_step):
+
+        next_state, reward, done = env.get_action(action)
+
+        if done == False:
+            next_action = agent.sample_action(next_state)
+            
+        agent.update(state, action, reward, next_state, next_action, done)
+
+        state = next_state
+        action = next_action
+        step += 1
+        total_reward += reward
+
+        if epi >= render_ep:
+            render(env)
+
+    print("episode:",epi,"avg reward:", total_reward)
+    reward_log.append(total_reward)
+    # print(np.shape(agent.Q_table[state]))
+
+rf = plt.figure(2)
+plt.plot(reward_log)
+
+plt.close(fig=fig)
 plt.show()
 
-#TODO: GIT,  Q-learning
+
+
+#TODO: Q-learning
