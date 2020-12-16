@@ -1,5 +1,5 @@
 ###############
-# Q-learning  #
+#  REINFORCE  #
 ###############
 
 from matplotlib import pyplot as plt
@@ -8,6 +8,12 @@ from matplotlib.gridspec import GridSpec
 import numpy as np
 import copy
 import random
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.distributions import Categorical
 
 # Environment
 class Env():
@@ -39,7 +45,7 @@ class Env():
         return initial_state
 
     def get_action(self, action):
-
+        # print(action)
         prev_state = copy.deepcopy(self.uav)
 
         # action: 0-> right, 1-> left, 3-> up, 4-> down, 5-> stay
@@ -59,6 +65,7 @@ class Env():
             self.world[self.uav[0]][self.uav[1]] = 1
             next_state = (self.uav[0], self.uav[1], self.current_fuel)
             reward = -1
+
             done = False
 
 
@@ -84,8 +91,8 @@ class Env():
 
             # OUT OF FUEL
             if self.current_fuel <= 0:
-                print("out of fuel")
-                reward = -100
+                # print("out of fuel")
+                reward = -10
                 done = True
             
             # GOAL reached
@@ -95,41 +102,64 @@ class Env():
                 done = True
             
         else:
-            print('out of the world')
+            # print('out of the world')
             next_state = None
-            reward = -100
+            reward = -10
             done = True
+        
+
+        d2g = np.linalg.norm((np.array(self.uav) - np.array(self.goal)))
+        d2g_prev = np.linalg.norm((np.array(prev_state) - np.array(self.goal)))
+
+        if self.current_fuel <= np.sum(np.abs((np.array(self.uav) - np.array(self.goal)))) and self.uav == self.recharger:
+            reward += 10
+
+        if d2g < d2g_prev:
+            reward += 2
         
         return next_state, reward, done
 
-class Q_learning():
-    def __init__(self, state_space, action_space, learning_step, discount_factor, epsilon):
+class REINFORCE(nn.Module):
+    def __init__(self, device, state_space, action_space, learning_step, discount_factor, epsilon):
+        super(REINFORCE, self).__init__()
+
+        self.device = device
+
+        self.data = []
         
-        self.s_space = state_space
-        self.a_space = action_space
+        self.s_space = len(state_space)
+        self.a_space = action_space[0]
         self.alpha = learning_step
         self.gamma = discount_factor
         self.epsilon = epsilon
 
-        self.Q_table = np.zeros((self.s_space+self.a_space))
+        self.fc1 = nn.Linear(self.s_space, 32)
+        self.fc2 = nn.Linear(32, self.a_space)
+        self.optimizer = optim.SGD(self.parameters(), lr=self.alpha)
 
-    def sample_action(self, state):
+    def forward(self, x):
+        
+        x = F.relu(self.fc1(x))
+        x = F.softmax(self.fc2(x), dim=0)
+        return x
 
-        if random.random() > self.epsilon:
-            # print(self.Q_table[state])
-            action = np.argmax(self.Q_table[state])
-        else:
-            action = np.random.randint(self.a_space[0])
-            
-        return action
+    def put_data(self, item):
+
+        self.data.append(item)
     
-    def update(self, state, action, reward, next_state, done):
+    def update(self):
 
-        S_A_pair = state + (action,)
-
-        done = 0 if done==True else 1
-        self.Q_table[S_A_pair] = self.Q_table[S_A_pair] + self.alpha*(reward + done*self.gamma*np.max(self.Q_table[next_state]) - self.Q_table[S_A_pair])
-
+        R = 0
+        
+        self.optimizer.zero_grad()
+        
+        for r, prob in self.data[::-1]:
+            R = r + self.gamma * R
+            loss = -torch.log(prob) * R
+            loss.to(self.device).backward()
+        # print(R)
+        self.optimizer.step()
+        self.data = []
 
 env = Env()
 
@@ -155,28 +185,32 @@ def render(env_):
     ax2.pcolormesh(env.fuel_level, cmap=cmap2, edgecolors='k', linewidths=3, vmin=0, vmax=1)
     plt.pause(1)
 
-episode = 1000
+episode = 5000
 max_step = 100
 state_space = [5,5,6] 
 action_space = [5]
-learning_step = 0.1
-discount_factor = 0.99
+learning_step = 0.0001
+discount_factor = 0.98
 epsilon = 0
 
-render_ep = 450
+render_ep = 20000
+render_flag = False
 
 # action: 0-> right, 1-> left, 3-> up, 4-> down, 5-> stay
 action_dict = {0:"right", 1:"left", 2:"up", 3:"down", 4:"stay"}
 
-agent = Q_learning(state_space, action_space, learning_step, discount_factor, epsilon)
+if torch.cuda.is_available():
+        device = torch.device("cuda")
+
+agent = REINFORCE(device, state_space, action_space, learning_step, discount_factor, epsilon).to(device)
 
 reward_log = []
 
 for epi in range(episode):
-    print("EPI START")
+    # print("EPI START")
     state = env.reset()
 
-    if epi >= render_ep:
+    if epi % render_ep == 0 and render_flag:
         render(env)
 
     step = 0
@@ -185,31 +219,30 @@ for epi in range(episode):
     
     while (not done) and (step < max_step):
 
-        action = agent.sample_action(state)
-        # print(action)
-        # print(action_dict[action])
+        action_prob = agent(torch.tensor(state).float().to(device))
+        # print(action_prob)
+
+        m = Categorical(action_prob)
+        action = m.sample()
 
         next_state, reward, done = env.get_action(action)
 
-        agent.update(state, action, reward, next_state, done)
+        agent.put_data((reward, action_prob[action]))
 
         state = next_state
         step += 1
         total_reward += reward
 
-        if epi >= render_ep:
+        if epi % render_ep == 0 and render_flag:
             render(env)
+
+    agent.update()
 
     print("episode:",epi,"avg reward:", total_reward)
     reward_log.append(total_reward)
-    # print(np.shape(agent.Q_table[state]))
 
 rf = plt.figure(2)
 plt.plot(reward_log)
 
-
+plt.close(fig=fig)
 plt.show()
-
-
-
-#TODO: Q-learning
