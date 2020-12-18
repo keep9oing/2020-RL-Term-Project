@@ -1,5 +1,5 @@
 ###############
-#  REINFORCE  #
+# Q-learning  #
 ###############
 
 from matplotlib import pyplot as plt
@@ -9,24 +9,19 @@ import numpy as np
 import copy
 import random
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from torch.distributions import Categorical
-
 # Environment
 class Env():
     def __init__(self):
         self.uav = [0,0]
-        self.recharger = [2,2]
-        self.goal = [4,4]
+        self.rechargers = [[2,5],[6,3],[7,7]]
+        self.goal = [9,9]
 
-        self.map_size = 5
+        self.map_size = 10
         self.world = np.zeros((self.map_size, self.map_size))
 
-        self.total_fuel = 5
+        self.total_fuel = 7
         self.current_fuel = self.total_fuel
+        self.current_recharger = None
 
         self.reset()
 
@@ -37,7 +32,8 @@ class Env():
         self.world = np.zeros((self.map_size, self.map_size))
         
         self.world[self.goal[0]][self.goal[1]] = 3
-        self.world[self.recharger[0]][self.recharger[1]] = 2
+        for i in range(len(self.rechargers)):
+            self.world[self.rechargers[i][0]][self.rechargers[i][1]] = 2
         self.world[self.uav[0]][self.uav[1]] = 1
 
         initial_state = (self.uav[0], self.uav[1], self.current_fuel)
@@ -68,9 +64,10 @@ class Env():
             done = False
 
             # FUEL Value change
-            if self.uav == self.recharger:
+            if self.uav in self.rechargers:
                 self.world[prev_state[0]][prev_state[1]] = 0
                 self.current_fuel = min(self.total_fuel, self.current_fuel+1)
+                self.current_recharger = self.rechargers[self.rechargers.index(self.uav)]
             else:
                 if action == 4:
                     self.world[prev_state[0]][prev_state[1]] = 1
@@ -81,73 +78,61 @@ class Env():
             # FUEL level change for ploting
             self.fuel_level = [[1] if i<self.current_fuel else [0] for i in range(self.total_fuel)]
 
-            # Just for rendering
-            if prev_state == self.recharger and self.uav != self.recharger:
-                self.world[self.recharger[0]][self.recharger[1]] = 2
-            elif prev_state == self.recharger and action == 4:
-                self.world[self.recharger[0]][self.recharger[1]] = 1
+            # Overlapping
+            if prev_state in self.rechargers and self.uav not in self.rechargers:
+                for i in range(len(self.rechargers)):
+                    self.world[self.rechargers[i][0]][self.rechargers[i][1]] = 2
+            elif prev_state in self.rechargers and action==4:
+                self.world[self.current_recharger[0]][self.current_recharger[1]] = 1
 
             # OUT OF FUEL
             if self.current_fuel <= 0:
-                # print("out of fuel")
-                reward = -2
+                print("out of fuel")
+                reward = -100
                 done = True
             
             # GOAL reached
             if self.uav == self.goal:
                 print("GOAL!!!")
-                reward = 10
+                reward = 100
                 done = True
             
         else:
-            # print('out of the world')
+            print('out of the world')
             next_state = None
-            reward = -2
+            reward = -100
             done = True
         
         return next_state, reward, done
 
-class REINFORCE(nn.Module):
-    def __init__(self, device, state_space, action_space, learning_step, discount_factor, epsilon):
-        super(REINFORCE, self).__init__()
-
-        self.device = device
-
-        self.data = []
+class Q_learning():
+    def __init__(self, state_space, action_space, learning_step, discount_factor, epsilon):
         
-        self.s_space = len(state_space)
-        self.a_space = action_space[0]
+        self.s_space = state_space
+        self.a_space = action_space
         self.alpha = learning_step
         self.gamma = discount_factor
         self.epsilon = epsilon
 
-        self.fc1 = nn.Linear(self.s_space, 32)
-        self.fc2 = nn.Linear(32, self.a_space)
-        self.optimizer = optim.SGD(self.parameters(), lr=self.alpha)
+        self.Q_table = np.zeros((self.s_space+self.a_space))
 
-    def forward(self, x):
-        
-        x = F.relu(self.fc1(x))
-        x = F.softmax(self.fc2(x), dim=0)
-        return x
+    def sample_action(self, state):
 
-    def put_data(self, item):
-
-        self.data.append(item)
+        if random.random() > self.epsilon:
+            # print(self.Q_table[state])
+            action = np.argmax(self.Q_table[state])
+        else:
+            action = np.random.randint(self.a_space[0])
+            
+        return action
     
-    def update(self):
+    def update(self, state, action, reward, next_state, done):
 
-        R = 0
-        
-        self.optimizer.zero_grad()
-        
-        for r, prob in self.data[::-1]:
-            R = r + self.gamma * R
-            loss = -torch.log(prob) * R
-            loss.to(self.device).backward()
-        print(R)
-        self.optimizer.step()
-        self.data = []
+        S_A_pair = state + (action,)
+
+        done = 0 if done==True else 1
+        self.Q_table[S_A_pair] = self.Q_table[S_A_pair] + self.alpha*(reward + done*self.gamma*np.max(self.Q_table[next_state]) - self.Q_table[S_A_pair])
+
 
 env = Env()
 
@@ -168,38 +153,35 @@ ax2.pcolormesh(env.fuel_level, cmap=cmap2, edgecolors='k', linewidths=3, vmin=0,
 ax2.set_title('Fuel level')
 
 
-def render(env_):
+def render(env_, render_time):
     ax1.pcolormesh(env_.world[::-1], cmap=cmap1, edgecolors='k', linewidths=3, vmin=0, vmax=3)
     ax2.pcolormesh(env.fuel_level, cmap=cmap2, edgecolors='k', linewidths=3, vmin=0, vmax=1)
-    plt.pause(1)
+    plt.pause(render_time)
 
-episode = 3000
+episode = 10000
 max_step = 100
-state_space = [5,5,6] 
+state_space = [10,10,8] 
 action_space = [5]
-learning_step = 0.001
-discount_factor = 0.98
-epsilon = 0
+learning_step = 0.1
+discount_factor = 0.99
+epsilon = 0.1
 
-render_ep = 20000
-render_flag = False
+render_ep = 40000
+render_time = 1
 
 # action: 0-> right, 1-> left, 3-> up, 4-> down, 5-> stay
 action_dict = {0:"right", 1:"left", 2:"up", 3:"down", 4:"stay"}
 
-if torch.cuda.is_available():
-        device = torch.device("cuda")
-
-agent = REINFORCE(device, state_space, action_space, learning_step, discount_factor, epsilon).to(device)
+agent = Q_learning(state_space, action_space, learning_step, discount_factor, epsilon)
 
 reward_log = []
 
 for epi in range(episode):
-    # print("EPI START")
+    print("EPI START")
     state = env.reset()
 
-    if epi % render_ep == 0 and render_flag:
-        render(env)
+    if epi >= render_ep:
+        render(env, render_time)
 
     step = 0
     total_reward = 0
@@ -207,37 +189,32 @@ for epi in range(episode):
     
     while (not done) and (step < max_step):
 
-        action_prob = agent(torch.tensor(state).float().to(device))
-        # print(action_prob)
-
-        m = Categorical(action_prob)
-        action = m.sample()
+        action = agent.sample_action(state)
+        # print(action)
+        # print(action_dict[action])
 
         next_state, reward, done = env.get_action(action)
 
-        agent.put_data((reward, action_prob[action]))
+        agent.update(state, action, reward, next_state, done)
 
         state = next_state
         step += 1
         total_reward += reward
 
-        if epi % render_ep == 0 and render_flag:
-            render(env)
-
-    agent.update()
+        if epi >= render_ep:
+            render(env, render_time)
 
     print("episode:",epi,"avg reward:", total_reward)
     reward_log.append(total_reward)
+    # print(np.shape(agent.Q_table[state]))
 
 rf = plt.figure(2)
 plt.plot(reward_log)
 
 plt.close(fig=fig)
-# plt.show()
+plt.show()
 
+import pickle
 
-###
-# learning rate에 따라 다름 0.001일때 잘되고 더 높으면 잘 안됨
-# reward를 바꿔줘야 잘 되고 reward는 total trajectory에 대해 학습하기때문에 잘 계산 해줘야하는 문제가 존재 바로죽는경우 < 좀더가다가 죽는경우, 안그러면 계속 멈춰있는 현상 발생
-# 
-###
+with open('asset/reward_log/Large/Q-learning.pkl', 'wb') as f:
+    pickle.dump(reward_log, f)

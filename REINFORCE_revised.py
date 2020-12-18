@@ -246,3 +246,8 @@ plt.plot(reward_log)
 
 plt.close(fig=fig)
 plt.show()
+
+import pickle
+
+with open('asset/reward_log/Revised/REINFORCE.pkl', 'wb') as f:
+    pickle.dump(reward_log, f)

@@ -1,5 +1,5 @@
 ###############
-#  REINFORCE  #
+# Q-learning  #
 ###############
 
 from matplotlib import pyplot as plt
@@ -8,12 +8,6 @@ from matplotlib.gridspec import GridSpec
 import numpy as np
 import copy
 import random
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from torch.distributions import Categorical
 
 # Environment
 class Env():
@@ -119,49 +113,34 @@ class Env():
         
         return next_state, reward, done
 
-class REINFORCE(nn.Module):
-    def __init__(self, device, state_space, action_space, learning_step, discount_factor, epsilon):
-        super(REINFORCE, self).__init__()
-
-        self.device = device
-
-        self.data = []
+class Q_learning():
+    def __init__(self, state_space, action_space, learning_step, discount_factor, epsilon):
         
-        self.s_space = len(state_space)
-        self.a_space = action_space[0]
+        self.s_space = state_space
+        self.a_space = action_space
         self.alpha = learning_step
         self.gamma = discount_factor
         self.epsilon = epsilon
 
-        self.fc1 = nn.Linear(self.s_space, 32)
-        # self.fc2 = nn.Linear(32, 32)
-        self.fc2 = nn.Linear(32, self.a_space)
-        self.optimizer = optim.SGD(self.parameters(), lr=self.alpha)
+        self.Q_table = np.zeros((self.s_space+self.a_space))
 
-    def forward(self, x):
-        
-        x = F.relu(self.fc1(x))
-        # x = F.relu(self.fc2(x))
-        x = F.softmax(self.fc2(x), dim=0)
-        return x
+    def sample_action(self, state):
 
-    def put_data(self, item):
-
-        self.data.append(item)
+        if random.random() > self.epsilon:
+            # print(self.Q_table[state])
+            action = np.argmax(self.Q_table[state])
+        else:
+            action = np.random.randint(self.a_space[0])
+            
+        return action
     
-    def update(self):
+    def update(self, state, action, reward, next_state, done):
 
-        R = 0
-        
-        self.optimizer.zero_grad()
+        S_A_pair = state + (action,)
 
-        for r, prob in self.data[::-1]:
-            R = r + self.gamma * R
-            loss = -torch.log(prob) * R
-            loss.to(self.device).backward()
+        done = 0 if done==True else 1
+        self.Q_table[S_A_pair] = self.Q_table[S_A_pair] + self.alpha*(reward + done*self.gamma*np.max(self.Q_table[next_state]) - self.Q_table[S_A_pair])
 
-        self.optimizer.step()
-        self.data = []
 
 env = Env()
 
@@ -185,74 +164,64 @@ ax2.set_title('Fuel level')
 def render(env_):
     ax1.pcolormesh(env_.world[::-1], cmap=cmap1, edgecolors='k', linewidths=3, vmin=0, vmax=3)
     ax2.pcolormesh(env.fuel_level, cmap=cmap2, edgecolors='k', linewidths=3, vmin=0, vmax=1)
-    plt.pause(0.01)
+    plt.pause(1)
 
-episode = 3000
+episode = 500
 max_step = 100
-# state_space = [5,5,6,5,5] 
 state_space = [5,5,6] 
 action_space = [5]
-learning_step = 0.001
-discount_factor = 0.98
-epsilon = 0
+learning_step = 0.1
+discount_factor = 0.99
+epsilon = 0.1
 
-render_ep = 20000
-render_flag = False
+render_ep = 3000
 
-# action: 0-> right, 1-> left, 2-> up, 3-> down, 4-> stay
+# action: 0-> right, 1-> left, 3-> up, 4-> down, 5-> stay
 action_dict = {0:"right", 1:"left", 2:"up", 3:"down", 4:"stay"}
 
-if torch.cuda.is_available():
-        device = torch.device("cuda")
-
-agent = REINFORCE(device, state_space, action_space, learning_step, discount_factor, epsilon).to(device)
+agent = Q_learning(state_space, action_space, learning_step, discount_factor, epsilon)
 
 reward_log = []
 
-
 for epi in range(episode):
-    # print("EPI START")
+    print("EPI START")
     state = env.reset()
 
-    if epi > render_ep and render_flag:
+    if epi >= render_ep:
         render(env)
 
     step = 0
-    total_reward = []
+    total_reward = 0
     done = False    
-
-    action_log = []
-
+    
     while (not done) and (step < max_step):
 
-        action_prob = agent(torch.tensor(state).float().to(device))
-
-        m = Categorical(action_prob)
-        action = m.sample()
-
-        action_log.append(action)
+        action = agent.sample_action(state)
+        # print(action)
+        # print(action_dict[action])
 
         next_state, reward, done = env.get_action(action)
-        # print(next_state, reward)
 
-        agent.put_data((reward, action_prob[action]))
+        agent.update(state, action, reward, next_state, done)
 
         state = next_state
         step += 1
-        total_reward.append(reward)
+        total_reward += reward
 
-        if epi > render_ep and render_flag:
+        if epi >= render_ep:
             render(env)
 
-    # print(agent.data)
-    agent.update()
-    # print(total_reward)
-    # print(action_log)
-    print("episode:",epi,"total reward:", sum(total_reward))
-    reward_log.append(sum(total_reward))
+    print("episode:",epi,"avg reward:", total_reward)
+    reward_log.append(total_reward)
+    # print(np.shape(agent.Q_table[state]))
 
 rf = plt.figure(2)
 plt.plot(reward_log)
 
 plt.close(fig=fig)
 plt.show()
+
+import pickle
+
+with open('asset/reward_log/Revised/Q-learning_revised.pkl', 'wb') as f:
+    pickle.dump(reward_log, f)

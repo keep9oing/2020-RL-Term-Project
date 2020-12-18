@@ -116,7 +116,6 @@ class SARSA():
     def sample_action(self, state):
 
         if random.random() > self.epsilon:
-            # print(self.Q_table[state])
             action = np.argmax(self.Q_table[state])
         else:
             action = np.random.randint(self.a_space[0])
@@ -157,7 +156,7 @@ def render(env_):
     ax2.pcolormesh(env.fuel_level, cmap=cmap2, edgecolors='k', linewidths=3, vmin=0, vmax=1)
     plt.pause(1)
 
-episode = 1000
+episode = 500
 max_step = 100
 state_space = [5,5,6] 
 action_space = [5]
@@ -165,7 +164,7 @@ learning_step = 0.1
 discount_factor = 0.99
 epsilon = 0.1
 
-render_ep = 300
+render_ep = 3000
 
 # action: 0-> right, 1-> left, 3-> up, 4-> down, 5-> stay
 action_dict = {0:"right", 1:"left", 2:"up", 3:"down", 4:"stay"}
@@ -206,7 +205,6 @@ for epi in range(episode):
 
     print("episode:",epi,"avg reward:", total_reward)
     reward_log.append(total_reward)
-    # print(np.shape(agent.Q_table[state]))
 
 rf = plt.figure(2)
 plt.plot(reward_log)
@@ -214,6 +212,7 @@ plt.plot(reward_log)
 plt.close(fig=fig)
 plt.show()
 
+import pickle
 
-
-#TODO: Q-learning
+with open('asset/reward_log/Simple/SARSA.pkl', 'wb') as f:
+    pickle.dump(reward_log, f)

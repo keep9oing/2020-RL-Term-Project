@@ -1,5 +1,5 @@
 ###############
-# Q-learning  #
+#    SARSA    #
 ###############
 
 from matplotlib import pyplot as plt
@@ -39,7 +39,7 @@ class Env():
         return initial_state
 
     def get_action(self, action):
-
+        # print(action)
         prev_state = copy.deepcopy(self.uav)
 
         # action: 0-> right, 1-> left, 3-> up, 4-> down, 5-> stay
@@ -59,6 +59,7 @@ class Env():
             self.world[self.uav[0]][self.uav[1]] = 1
             next_state = (self.uav[0], self.uav[1], self.current_fuel)
             reward = -1
+
             done = False
 
 
@@ -84,8 +85,8 @@ class Env():
 
             # OUT OF FUEL
             if self.current_fuel <= 0:
-                print("out of fuel")
-                reward = -100
+                # print("out of fuel")
+                reward = -10
                 done = True
             
             # GOAL reached
@@ -95,14 +96,24 @@ class Env():
                 done = True
             
         else:
-            print('out of the world')
+            # print('out of the world')
             next_state = None
-            reward = -100
+            reward = -10
             done = True
+        
+
+        d2g = np.linalg.norm((np.array(self.uav) - np.array(self.goal)))
+        d2g_prev = np.linalg.norm((np.array(prev_state) - np.array(self.goal)))
+
+        if self.current_fuel <= np.sum(np.abs((np.array(self.uav) - np.array(self.goal)))) and self.uav == self.recharger:
+            reward += 10
+
+        if d2g < d2g_prev:
+            reward += 2
         
         return next_state, reward, done
 
-class Q_learning():
+class SARSA():
     def __init__(self, state_space, action_space, learning_step, discount_factor, epsilon):
         
         self.s_space = state_space
@@ -123,13 +134,15 @@ class Q_learning():
             
         return action
     
-    def update(self, state, action, reward, next_state, done):
+    def update(self, state, action, reward, next_state, next_action, done):
 
         S_A_pair = state + (action,)
 
-        done = 0 if done==True else 1
-        self.Q_table[S_A_pair] = self.Q_table[S_A_pair] + self.alpha*(reward + done*self.gamma*np.max(self.Q_table[next_state]) - self.Q_table[S_A_pair])
-
+        if done:
+            self.Q_table[S_A_pair] = self.Q_table[S_A_pair] + self.alpha*(reward - self.Q_table[S_A_pair])
+        else:
+            Next_S_A_pair = next_state + (next_action,)
+            self.Q_table[S_A_pair] = self.Q_table[S_A_pair] + self.alpha*(reward + done*self.gamma*self.Q_table[Next_S_A_pair] - self.Q_table[S_A_pair])
 
 env = Env()
 
@@ -153,9 +166,9 @@ ax2.set_title('Fuel level')
 def render(env_):
     ax1.pcolormesh(env_.world[::-1], cmap=cmap1, edgecolors='k', linewidths=3, vmin=0, vmax=3)
     ax2.pcolormesh(env.fuel_level, cmap=cmap2, edgecolors='k', linewidths=3, vmin=0, vmax=1)
-    plt.pause(10)
+    plt.pause(1)
 
-episode = 500
+episode = 10000
 max_step = 100
 state_space = [5,5,6] 
 action_space = [5]
@@ -163,13 +176,12 @@ learning_step = 0.1
 discount_factor = 0.99
 epsilon = 0.1
 
-# Wath behavior after this episode
-render_ep = 4000
+render_ep = 30000000000
 
 # action: 0-> right, 1-> left, 3-> up, 4-> down, 5-> stay
 action_dict = {0:"right", 1:"left", 2:"up", 3:"down", 4:"stay"}
 
-agent = Q_learning(state_space, action_space, learning_step, discount_factor, epsilon)
+agent = SARSA(state_space, action_space, learning_step, discount_factor, epsilon)
 
 reward_log = []
 
@@ -182,17 +194,21 @@ for epi in range(episode):
 
     step = 0
     total_reward = 0
-    done = False    
+    done = False
+
+    action = agent.sample_action(state)    
     
     while (not done) and (step < max_step):
 
-        action = agent.sample_action(state)
-
         next_state, reward, done = env.get_action(action)
 
-        agent.update(state, action, reward, next_state, done)
+        if done == False:
+            next_action = agent.sample_action(next_state)
+            
+        agent.update(state, action, reward, next_state, next_action, done)
 
         state = next_state
+        action = next_action
         step += 1
         total_reward += reward
 
@@ -201,6 +217,7 @@ for epi in range(episode):
 
     print("episode:",epi,"avg reward:", total_reward)
     reward_log.append(total_reward)
+    # print(np.shape(agent.Q_table[state]))
 
 rf = plt.figure(2)
 plt.plot(reward_log)
@@ -208,7 +225,6 @@ plt.plot(reward_log)
 plt.close(fig=fig)
 plt.show()
 
-import pickle
 
-with open('asset/reward_log/Simple/Q-learning.pkl', 'wb') as f:
-    pickle.dump(reward_log, f)
+
+#TODO: Q-learning
